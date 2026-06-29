@@ -845,7 +845,10 @@ export default function App() {
                             AI Assessment
                           </p>
                           <p className="text-xs text-red-750 leading-relaxed font-semibold">
-                            AI Assessment: {rejectionReason}
+                            Detection Notice: {rejectionReason}
+                          </p>
+                          <p className="text-xs text-red-750/90 font-medium">
+                            Community Reminder: Please be responsible and upload clear, real-world public infrastructure evidence.
                           </p>
                         </div>
                       </div>

@@ -148,6 +148,35 @@ function parseGeminiResponse(rawText: string) {
   return JSON.parse(cleaned);
 }
 
+// Helper to call Gemini API with retries for temporary service/rate-limiting errors
+async function generateContentWithRetry(ai: any, params: any, retries = 3, delayMs = 1000): Promise<any> {
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      return await ai.models.generateContent(params);
+    } catch (err: any) {
+      const isRateLimitOrUnavailable =
+        err?.status === 429 ||
+        err?.status === 503 ||
+        err?.code === 503 ||
+        (err?.message && (
+          err.message.includes("503") ||
+          err.message.includes("UNAVAILABLE") ||
+          err.message.includes("high demand") ||
+          err.message.includes("429") ||
+          err.message.includes("ResourceExhausted")
+        ));
+      
+      if (isRateLimitOrUnavailable && attempt < retries) {
+        console.warn(`Gemini API call returned temporary error (attempt ${attempt}/${retries}). Retrying in ${delayMs}ms... Error: ${err?.message || err}`);
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+        delayMs *= 2; // Exponential backoff
+        continue;
+      }
+      throw err;
+    }
+  }
+}
+
 // --- API ROUTES ---
 
 // 1. Get complete state
@@ -273,12 +302,19 @@ app.post("/api/report", async (req, res) => {
     const systemInstruction = `You are the verification engine for public-ally, a civic application. Analyze this user-uploaded image for both legitimacy (Anti-Fraud) and categorization. 
 Step 1: Set 'is_legitimate' to false if the image is a photo of another digital screen, contains heavy stock photo watermarks, appears to be AI-generated/synthetic/manipulated content, or does not show a real-world city infrastructure issue (e.g., a selfie, meme, or random indoor room). Otherwise, set it to true.
 Step 2: If legitimate, classify the issue into exactly one of these strings: [Pothole, Water Leakage, Damaged Streetlight, Waste Management, Public Infrastructure]. If not legitimate, set category to 'None'.
+
+For 'rejection_reason' when 'is_legitimate' is false:
+- If you detect the image is synthetic, manipulated, or AI-generated, 'rejection_reason' must be exactly: "Image likely AI-generated."
+- If you detect the image is a private indoor/home photo or taken in a private setting, 'rejection_reason' must be exactly: "Image likely from a local home/private area."
+- If you detect the image is a photo of another digital screen, 'rejection_reason' must be exactly: "Image likely a photo of another screen."
+- For other non-legitimate images, provide a concise real reason why it does not represent a real-world public infrastructure issue.
+
 Return strictly a JSON object with keys: 'is_legitimate' (boolean), 'rejection_reason' (string or null), and 'category' (string).`;
 
     let verificationResult;
     try {
-      // Make Gemini API call
-      const response = await ai.models.generateContent({
+      // Make Gemini API call with retries for transient issues like high demand (503)
+      const response = await generateContentWithRetry(ai, {
         model: "gemini-3.5-flash",
         contents: [imagePart, promptPart],
         config: {
@@ -295,7 +331,7 @@ Return strictly a JSON object with keys: 'is_legitimate' (boolean), 'rejection_r
 
       verificationResult = parseGeminiResponse(resultText);
     } catch (apiError) {
-      console.error("Gemini API direct failure, fallback to manual triggered:", apiError);
+      console.warn("Gemini API direct failure, fallback to manual triggered:", apiError);
       return res.json({
         requiresManualCategorization: true,
         message: "Notice: We couldn't automatically detect your issue type. Please remember to be responsible, accurate, and honest in what you upload to public-ally."
@@ -358,7 +394,7 @@ Return strictly a JSON object with keys: 'is_legitimate' (boolean), 'rejection_r
     }
 
   } catch (error: any) {
-    console.error("Verification logic wrapper failure, triggering fallback:", error);
+    console.warn("Verification logic wrapper failure, triggering fallback:", error);
     return res.json({
       requiresManualCategorization: true,
       message: "Notice: We couldn't automatically detect your issue type. Please remember to be responsible, accurate, and honest in what you upload to public-ally."
