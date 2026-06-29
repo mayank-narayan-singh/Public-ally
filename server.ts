@@ -48,6 +48,11 @@ const initialLeaders: Leader[] = [
   { id: "3", name: "Priya Rajan", city: "Chennai", points: 780 },
   { id: "4", name: "Gadwal Vijayalakshmi", city: "Hyderabad", points: 890 },
   { id: "5", name: "Bhushan Gagrani", city: "Mumbai", points: 940 },
+  { id: "6", name: "Pratibhaben Jain", city: "Ahmedabad", points: 810 },
+  { id: "7", name: "Firhad Hakim", city: "Kolkata", points: 860 },
+  { id: "8", name: "Naval Kishore Ram", city: "Pune", points: 900 },
+  { id: "9", name: "Somya Gurjar", city: "Jaipur", points: 750 },
+  { id: "10", name: "Sushma Kharakwal", city: "Lucknow", points: 830 },
 ];
 
 // Helper to load or initialize database
@@ -58,6 +63,17 @@ function loadDb(): DbSchema {
       const parsed = JSON.parse(data);
       // Ensure basic structure is correct
       if (parsed && Array.isArray(parsed.leaders) && Array.isArray(parsed.reports) && Array.isArray(parsed.imageHashes)) {
+        // Automatically migrate to include any new initial leaders that aren't already in the loaded leaders list
+        let modified = false;
+        for (const initialLeader of initialLeaders) {
+          if (!parsed.leaders.some((l: any) => l.city.toLowerCase() === initialLeader.city.toLowerCase())) {
+            parsed.leaders.push(initialLeader);
+            modified = true;
+          }
+        }
+        if (modified) {
+          saveDb(parsed);
+        }
         return parsed;
       }
     }
@@ -156,7 +172,7 @@ app.post("/api/reset", (req, res) => {
 
 // 3. Submit civic issue report
 app.post("/api/report", async (req, res) => {
-  const { imageBase64, city } = req.body;
+  const { imageBase64, city, manualCategory, isDisputedOverride } = req.body;
 
   if (!imageBase64) {
     return res.status(400).json({ error: "Missing image upload." });
@@ -166,7 +182,10 @@ app.post("/api/report", async (req, res) => {
     return res.status(400).json({ error: "Missing selected city." });
   }
 
-  const validCities = ["Bengaluru", "Delhi", "Chennai", "Hyderabad", "Mumbai"];
+  const validCities = [
+    "Bengaluru", "Delhi", "Chennai", "Hyderabad", "Mumbai",
+    "Ahmedabad", "Kolkata", "Pune", "Jaipur", "Lucknow"
+  ];
   if (!validCities.includes(city)) {
     return res.status(400).json({ error: `Invalid city. Must be one of: ${validCities.join(", ")}` });
   }
@@ -181,6 +200,56 @@ app.post("/api/report", async (req, res) => {
   if (db.imageHashes.includes(imageHash)) {
     return res.status(400).json({
       error: "Duplicate Error: This image has already been used to report an issue."
+    });
+  }
+
+  // --- MANUAL CATEGORIZATION FLOW ---
+  if (manualCategory) {
+    const validCategories = ["Pothole", "Water Leakage", "Damaged Streetlight", "Waste Management", "Public Infrastructure"];
+    if (!validCategories.includes(manualCategory)) {
+      return res.status(400).json({ error: "Invalid category selected." });
+    }
+
+    // Find leader for selected city
+    const leader = db.leaders.find(l => l.city.toLowerCase() === city.toLowerCase());
+    if (!leader) {
+      return res.status(400).json({ error: `No assigned leader found for city: ${city}` });
+    }
+
+    const isDisputed = !!isDisputedOverride;
+
+    // Create civic issue report
+    const newReport: CivicReport = {
+      id: crypto.randomUUID(),
+      imageUrl: imageBase64,
+      category: manualCategory,
+      city: city,
+      leaderName: leader.name,
+      status: isDisputed ? "Pending Verification (AI Dispute)" : "Reported",
+      timestamp: Date.now(),
+    };
+
+    // Add to public feed
+    db.reports.push(newReport);
+
+    // If NOT disputed, increment leader score by +100
+    if (!isDisputed) {
+      leader.points += 100;
+    }
+
+    // Track the image hash to prevent duplicates in the future
+    db.imageHashes.push(imageHash);
+
+    // Save database state
+    saveDb(db);
+
+    return res.json({
+      success: true,
+      report: newReport,
+      leaders: db.leaders,
+      message: isDisputed
+        ? "Success! Your dispute override has been submitted for Community Audit."
+        : "Success! Your report has been verified by public-ally."
     });
   }
 
@@ -206,23 +275,41 @@ Step 1: Set 'is_legitimate' to false if the image is a photo of another digital 
 Step 2: If legitimate, classify the issue into exactly one of these strings: [Pothole, Water Leakage, Damaged Streetlight, Waste Management, Public Infrastructure]. If not legitimate, set category to 'None'.
 Return strictly a JSON object with keys: 'is_legitimate' (boolean), 'rejection_reason' (string or null), and 'category' (string).`;
 
-    // Make Gemini API call
-    const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
-      contents: [imagePart, promptPart],
-      config: {
-        systemInstruction: systemInstruction,
-        temperature: 0.1,
-        responseMimeType: "application/json",
-      },
-    });
+    let verificationResult;
+    try {
+      // Make Gemini API call
+      const response = await ai.models.generateContent({
+        model: "gemini-3.5-flash",
+        contents: [imagePart, promptPart],
+        config: {
+          systemInstruction: systemInstruction,
+          temperature: 0.1,
+          responseMimeType: "application/json",
+        },
+      });
 
-    const resultText = response.text;
-    if (!resultText) {
-      throw new Error("Empty response received from verification engine.");
+      const resultText = response.text;
+      if (!resultText) {
+        throw new Error("Empty response received from verification engine.");
+      }
+
+      verificationResult = parseGeminiResponse(resultText);
+    } catch (apiError) {
+      console.error("Gemini API direct failure, fallback to manual triggered:", apiError);
+      return res.json({
+        requiresManualCategorization: true,
+        message: "Notice: We couldn't automatically detect your issue type. Please remember to be responsible, accurate, and honest in what you upload to public-ally."
+      });
     }
 
-    const verificationResult = parseGeminiResponse(resultText);
+    const isNoneCategory = !verificationResult.category || verificationResult.category.toLowerCase() === "none";
+
+    if (verificationResult.is_legitimate === true && isNoneCategory) {
+      return res.json({
+        requiresManualCategorization: true,
+        message: "Notice: We couldn't automatically detect your issue type. Please remember to be responsible, accurate, and honest in what you upload to public-ally."
+      });
+    }
 
     if (verificationResult.is_legitimate === true) {
       // Find leader for selected city
@@ -242,7 +329,7 @@ Return strictly a JSON object with keys: 'is_legitimate' (boolean), 'rejection_r
         timestamp: Date.now(),
       };
 
-      // Add to public feed, oldest/newest sorts at the client or backend, we'll append here
+      // Add to public feed
       db.reports.push(newReport);
 
       // Increment leader score by +100
@@ -262,20 +349,75 @@ Return strictly a JSON object with keys: 'is_legitimate' (boolean), 'rejection_r
       });
 
     } else {
-      // If Gemini returns is_legitimate: false
+      // If Gemini returns is_legitimate: false, return dispute warning rather than permanently blocking
       const rejectionReason = verificationResult.rejection_reason || "Image does not depict a real-world civic infrastructure issue.";
-      return res.status(400).json({
-        success: false,
-        error: `Verification Failed: ${rejectionReason}`
+      return res.json({
+        requiresDisputeOverride: true,
+        rejectionReason: rejectionReason
       });
     }
 
   } catch (error: any) {
-    console.error("Gemini Verification Error:", error);
-    return res.status(500).json({
-      error: `Verification Error: ${error.message || error}`
+    console.error("Verification logic wrapper failure, triggering fallback:", error);
+    return res.json({
+      requiresManualCategorization: true,
+      message: "Notice: We couldn't automatically detect your issue type. Please remember to be responsible, accurate, and honest in what you upload to public-ally."
     });
   }
+});
+
+// 4. Mark report as Resolved
+app.post("/api/report/:id/resolve", (req, res) => {
+  const { id } = req.params;
+  const db = loadDb();
+  const report = db.reports.find(r => r.id === id);
+  if (!report) {
+    return res.status(404).json({ error: "Report not found." });
+  }
+  if (report.status !== "Resolved") {
+    report.status = "Resolved";
+    // Find leader for that city and award +100 points
+    const leader = db.leaders.find(l => l.city.toLowerCase() === report.city.toLowerCase());
+    if (leader) {
+      leader.points += 100;
+    }
+    saveDb(db);
+  }
+  res.json({ success: true, reports: db.reports, leaders: db.leaders });
+});
+
+// 5. Approve Override for disputed issues
+app.post("/api/report/:id/approve-override", (req, res) => {
+  const { id } = req.params;
+  const db = loadDb();
+  const report = db.reports.find(r => r.id === id);
+  if (!report) {
+    return res.status(404).json({ error: "Report not found." });
+  }
+  if (report.status === "Pending Verification (AI Dispute)") {
+    report.status = "Reported";
+    // Award +100 points to the city leader now that it is approved
+    const leader = db.leaders.find(l => l.city.toLowerCase() === report.city.toLowerCase());
+    if (leader) {
+      leader.points += 100;
+    }
+    saveDb(db);
+  }
+  res.json({ success: true, reports: db.reports, leaders: db.leaders });
+});
+
+// 6. Confirm Fraud (delete card, keep points frozen/unchanged)
+app.post("/api/report/:id/confirm-fraud", (req, res) => {
+  const { id } = req.params;
+  const db = loadDb();
+  const reportIndex = db.reports.findIndex(r => r.id === id);
+  if (reportIndex === -1) {
+    return res.status(404).json({ error: "Report not found." });
+  }
+  // Remove the card from the feed entirely
+  db.reports.splice(reportIndex, 1);
+  saveDb(db);
+  res.json({ success: true, reports: db.reports, leaders: db.leaders, message: "Submission permanently deleted due to confirmed fraud." });
 });
 
 // Serve frontend assets & mount Vite middleware

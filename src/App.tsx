@@ -32,9 +32,25 @@ export default function App() {
   const [dragActive, setDragActive] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(false);
 
+  // Manual Categorization Fallback States
+  const [requiresManual, setRequiresManual] = useState<boolean>(false);
+  const [fallbackMessage, setFallbackMessage] = useState<string | null>(null);
+  const [manualCategorySelection, setManualCategorySelection] = useState<string>("Pothole");
+
+  // AI Dispute Override States
+  const [requiresDisputeOverride, setRequiresDisputeOverride] = useState<boolean>(false);
+  const [rejectionReason, setRejectionReason] = useState<string | null>(null);
+  const [disputedCategorySelection, setDisputedCategorySelection] = useState<string>("Pothole");
+
   // Notification States
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [resetConfirm, setResetConfirm] = useState<boolean>(false);
+
+  // Role-Based Views State
+  const [userRole, setUserRole] = useState<"Citizen" | "CityLeader" | "PlatformModerator">("Citizen");
+  const [roleDropdownOpen, setRoleDropdownOpen] = useState<boolean>(false);
+  const [issueToResolve, setIssueToResolve] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -55,6 +71,18 @@ export default function App() {
   useEffect(() => {
     fetchState();
   }, []);
+
+  useEffect(() => {
+    if (!roleDropdownOpen) return;
+    const handleOutsideClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest("#btn-role-dropdown")) {
+        setRoleDropdownOpen(false);
+      }
+    };
+    document.addEventListener("click", handleOutsideClick);
+    return () => document.removeEventListener("click", handleOutsideClick);
+  }, [roleDropdownOpen]);
 
   // Utility to convert file to Base64
   const handleFileChange = (file: File) => {
@@ -122,54 +150,163 @@ export default function App() {
     setErrorMessage(null);
     setSuccessMessage(null);
 
+    const bodyPayload: any = {
+      imageBase64: uploadedImage,
+      city: selectedCity,
+    };
+
+    if (requiresManual) {
+      bodyPayload.manualCategory = manualCategorySelection;
+    } else if (requiresDisputeOverride) {
+      bodyPayload.manualCategory = disputedCategorySelection;
+      bodyPayload.isDisputedOverride = true;
+    }
+
     try {
       const response = await fetch("/api/report", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          imageBase64: uploadedImage,
-          city: selectedCity,
-        }),
+        body: JSON.stringify(bodyPayload),
       });
 
       const data = await response.json();
 
       if (response.ok) {
-        // Success
-        setUploadedImage(null);
-        setImageFileName("");
-        // Reload states
-        setLeaders(data.leaders);
-        // Add new report to list or trigger standard state refresh
-        await fetchState();
-        showSuccess(data.message || "Success! Your report has been verified by public-ally.");
+        if (data.requiresManualCategorization) {
+          // Trigger fallback state
+          setRequiresManual(true);
+          setFallbackMessage(data.message || "Notice: We couldn't automatically detect your issue type. Please remember to be responsible, accurate, and honest in what you upload to public-ally.");
+          setRequiresDisputeOverride(false);
+          setRejectionReason(null);
+          setErrorMessage(null);
+          setSuccessMessage(null);
+        } else if (data.requiresDisputeOverride) {
+          // Trigger dispute override state
+          setRequiresDisputeOverride(true);
+          setRejectionReason(data.rejectionReason || "AI assessment rejected the image.");
+          setRequiresManual(false);
+          setFallbackMessage(null);
+          setErrorMessage(null);
+          setSuccessMessage(null);
+        } else {
+          // Normal Success or Completed manual / dispute override submission
+          setUploadedImage(null);
+          setImageFileName("");
+          setRequiresManual(false);
+          setFallbackMessage(null);
+          setManualCategorySelection("Pothole");
+
+          setRequiresDisputeOverride(false);
+          setRejectionReason(null);
+          setDisputedCategorySelection("Pothole");
+
+          // Reload states
+          setLeaders(data.leaders);
+          await fetchState();
+          showSuccess(data.message || "Success! Your report has been verified by public-ally.");
+        }
       } else {
         // Validation Failed or Duplicate
         showError(data.error || "Verification failed.");
       }
     } catch (err: any) {
-      showError(`Submission error: ${err.message || err}`);
+      console.error("Submission error, falling back to manual:", err);
+      // Fallback for API failure / network timeout
+      setRequiresManual(true);
+      setFallbackMessage("Notice: We couldn't automatically detect your issue type. Please remember to be responsible, accurate, and honest in what you upload to public-ally.");
+      setRequiresDisputeOverride(false);
+      setRejectionReason(null);
+      setErrorMessage(null);
+      setSuccessMessage(null);
     } finally {
       setLoading(false);
     }
   };
 
+  // Resolve the issue on the backend
+  const handleResolveIssue = async (id: string) => {
+    try {
+      const response = await fetch(`/api/report/${id}/resolve`, {
+        method: "POST",
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setReports(data.reports || []);
+        setLeaders(data.leaders || []);
+        showSuccess("Issue has been successfully marked as Resolved!");
+      } else {
+        const data = await response.json();
+        showError(data.error || "Failed to resolve issue.");
+      }
+    } catch (err: any) {
+      showError(`Error resolving issue: ${err.message || err}`);
+    }
+  };
+
+  // Approve the dispute override on the backend
+  const handleApproveOverride = async (id: string) => {
+    try {
+      const response = await fetch(`/api/report/${id}/approve-override`, {
+        method: "POST",
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setReports(data.reports || []);
+        setLeaders(data.leaders || []);
+        showSuccess("Dispute override has been successfully approved!");
+      } else {
+        const data = await response.json();
+        showError(data.error || "Failed to approve override.");
+      }
+    } catch (err: any) {
+      showError(`Error approving override: ${err.message || err}`);
+    }
+  };
+
+  // Confirm issue is fraud and delete it from the feed
+  const handleConfirmFraud = async (id: string) => {
+    try {
+      const response = await fetch(`/api/report/${id}/confirm-fraud`, {
+        method: "POST",
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setReports(data.reports || []);
+        setLeaders(data.leaders || []);
+        showSuccess(data.message || "Submission permanently deleted due to confirmed fraud.");
+      } else {
+        const data = await response.json();
+        showError(data.error || "Failed to confirm fraud.");
+      }
+    } catch (err: any) {
+      showError(`Error confirming fraud: ${err.message || err}`);
+    }
+  };
+
   // Reset Application Data (Developer Mode / Seeding Helper)
   const handleResetData = async () => {
-    if (confirm("Are you sure you want to clear all reported issues and reset leaders to initial scores?")) {
-      try {
-        const res = await fetch("/api/reset", { method: "POST" });
-        if (res.ok) {
-          const data = await res.json();
-          setLeaders(data.leaders);
-          setReports(data.reports);
-          showSuccess("Application data state successfully reset to default pre-seeded state.");
-        }
-      } catch (err) {
-        console.error("Error resetting data:", err);
+    if (!resetConfirm) {
+      setResetConfirm(true);
+      // Auto-cancel confirmation after 4 seconds of inactivity
+      setTimeout(() => {
+        setResetConfirm(false);
+      }, 4000);
+      return;
+    }
+
+    try {
+      const res = await fetch("/api/reset", { method: "POST" });
+      if (res.ok) {
+        const data = await res.json();
+        setLeaders(data.leaders);
+        setReports(data.reports);
+        setResetConfirm(false);
+        showSuccess("Application data state successfully reset to default pre-seeded state.");
       }
+    } catch (err) {
+      console.error("Error resetting data:", err);
     }
   };
 
@@ -393,9 +530,87 @@ export default function App() {
             </div>
 
             {/* Right side avatar slot */}
-            <div className="hidden md:flex items-center gap-4">
-              <div className="w-8 h-8 bg-slate-200 rounded-full flex items-center justify-center text-slate-600 font-semibold text-xs">
-                PA
+            <div className="flex items-center gap-2 md:gap-4">
+              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-100">
+                <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse"></span>
+                <span>Viewing as: {userRole === "Citizen" ? "Citizen" : userRole === "CityLeader" ? "City Leader" : "Platform Moderator"}</span>
+              </span>
+
+              <div className="relative">
+                <button
+                  id="btn-role-dropdown"
+                  onClick={() => setRoleDropdownOpen(!roleDropdownOpen)}
+                  className="w-8 h-8 bg-blue-600 hover:bg-blue-700 text-white rounded-full flex items-center justify-center font-bold text-xs shadow-md transition-all cursor-pointer focus:outline-none"
+                  title="Switch Role"
+                >
+                  PA
+                </button>
+
+                {roleDropdownOpen && (
+                  <div className="absolute right-0 mt-2 w-64 bg-white rounded-xl shadow-xl border border-slate-200 py-3 z-50 animate-fadeIn">
+                    <div className="px-4 py-1.5 border-b border-slate-100 mb-2">
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                        Demo Environment:
+                      </p>
+                      <p className="text-xs font-semibold text-slate-800">
+                        Switch User Role
+                      </p>
+                    </div>
+
+                    <div className="space-y-1 px-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setUserRole("Citizen");
+                          setRoleDropdownOpen(false);
+                          showSuccess("Switched view to Citizen role");
+                        }}
+                        className={`w-full flex items-center space-x-2.5 px-3 py-2 text-xs rounded-lg font-semibold transition-all text-left ${
+                          userRole === "Citizen"
+                            ? "bg-blue-50 text-blue-700 font-bold"
+                            : "text-slate-600 hover:bg-slate-50"
+                        }`}
+                      >
+                        <span className="text-sm">👤</span>
+                        <span>Citizen</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setUserRole("CityLeader");
+                          setRoleDropdownOpen(false);
+                          showSuccess("Switched view to City Leader role");
+                        }}
+                        className={`w-full flex items-center space-x-2.5 px-3 py-2 text-xs rounded-lg font-semibold transition-all text-left ${
+                          userRole === "CityLeader"
+                            ? "bg-blue-50 text-blue-700 font-bold"
+                            : "text-slate-600 hover:bg-slate-50"
+                        }`}
+                      >
+                        <span className="text-sm">🏛️</span>
+                        <span>City Leader</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setUserRole("PlatformModerator");
+                          setRoleDropdownOpen(false);
+                          showSuccess("Switched view to Platform Moderator role");
+                        }}
+                        className={`w-full flex items-center space-x-2.5 px-3 py-2 text-xs rounded-lg font-semibold transition-all text-left ${
+                          userRole === "PlatformModerator"
+                            ? "bg-blue-50 text-blue-700 font-bold"
+                            : "text-slate-600 hover:bg-slate-50"
+                        }`}
+                      >
+                        <span className="text-sm">🛡️</span>
+                        <span>Platform Moderator</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -513,6 +728,10 @@ export default function App() {
                                 e.stopPropagation();
                                 setUploadedImage(null);
                                 setImageFileName("");
+                                setRequiresManual(false);
+                                setFallbackMessage(null);
+                                setRequiresDisputeOverride(false);
+                                setRejectionReason(null);
                               }}
                               className="absolute top-2 right-2 p-1.5 bg-slate-900/80 hover:bg-slate-900 text-white rounded-full transition-colors"
                               title="Remove Image"
@@ -543,54 +762,6 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* Dev Sandbox Preview Helpers */}
-                  <div className="bg-slate-50/50 p-4 rounded-xl border border-slate-200 space-y-2">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center space-x-2">
-                        <Sparkles className="h-3.5 w-3.5 text-blue-600" />
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Sandbox Preloads</span>
-                      </div>
-                      <span className="text-[9px] text-blue-600 font-bold bg-blue-50 px-2 py-0.5 rounded-full">Test helper</span>
-                    </div>
-                    <div className="grid grid-cols-5 gap-1">
-                      <button
-                        type="button"
-                        onClick={() => generateMockTestImage("pothole")}
-                        className="text-[10px] font-bold bg-white border border-slate-200 hover:border-blue-400 py-1.5 px-1 rounded-lg text-slate-700 shadow-xs transition-colors"
-                      >
-                        Pothole
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => generateMockTestImage("leak")}
-                        className="text-[10px] font-bold bg-white border border-slate-200 hover:border-blue-400 py-1.5 px-1 rounded-lg text-slate-700 shadow-xs transition-colors"
-                      >
-                        Leak
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => generateMockTestImage("light")}
-                        className="text-[10px] font-bold bg-white border border-slate-200 hover:border-blue-400 py-1.5 px-1 rounded-lg text-slate-700 shadow-xs transition-colors"
-                      >
-                        Streetlight
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => generateMockTestImage("trash")}
-                        className="text-[10px] font-bold bg-white border border-slate-200 hover:border-blue-400 py-1.5 px-1 rounded-lg text-slate-700 shadow-xs transition-colors"
-                      >
-                        Waste
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => generateMockTestImage("fraud")}
-                        className="text-[10px] font-bold bg-white border border-red-200 hover:border-red-400 py-1.5 px-1 rounded-lg text-red-600 shadow-xs transition-colors"
-                      >
-                        Selfie
-                      </button>
-                    </div>
-                  </div>
-
                   {/* Dropdown Menu for City Selection */}
                   <div className="space-y-2">
                     <label htmlFor="city-select" className="text-xs font-semibold text-slate-600 uppercase tracking-wider block">
@@ -607,25 +778,137 @@ export default function App() {
                       <option value="Chennai">Chennai</option>
                       <option value="Hyderabad">Hyderabad</option>
                       <option value="Mumbai">Mumbai</option>
+                      <option value="Ahmedabad">Ahmedabad</option>
+                      <option value="Kolkata">Kolkata</option>
+                      <option value="Pune">Pune</option>
+                      <option value="Jaipur">Jaipur</option>
+                      <option value="Lucknow">Lucknow</option>
                     </select>
                   </div>
+                                  {/* Manual Categorization Fallback Banner & Dropdown */}
+                  {requiresManual && (
+                    <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 space-y-4 animate-fadeIn">
+                      <div className="flex gap-2.5">
+                        <ShieldAlert className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
+                        <div>
+                          <p className="text-xs font-bold text-amber-800 uppercase tracking-wider">
+                            Detection Notice
+                          </p>
+                          <p className="text-xs text-amber-750 leading-relaxed mt-0.5">
+                            Notice: We couldn't automatically detect your issue type. Please remember to be responsible, accurate, and honest in what you upload to public-ally.
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="pt-2 border-t border-amber-200/50 space-y-2">
+                        <label htmlFor="manual-category-select" className="text-xs font-bold text-slate-700 block">
+                          Help us categorize this issue manually:
+                        </label>
+                        <div className="flex gap-2">
+                          <select
+                            id="manual-category-select"
+                            value={manualCategorySelection}
+                            onChange={(e) => setManualCategorySelection(e.target.value)}
+                            className="flex-1 p-2.5 bg-white border border-amber-300 rounded-xl text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+                          >
+                            <option value="Pothole">Pothole</option>
+                            <option value="Water Leakage">Water Leakage</option>
+                            <option value="Damaged Streetlight">Damaged Streetlight</option>
+                            <option value="Waste Management">Waste Management</option>
+                            <option value="Public Infrastructure">Public Infrastructure</option>
+                          </select>
+
+                          <button
+                            type="submit"
+                            id="btn-complete-submission"
+                            disabled={loading}
+                            className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-md shadow-emerald-100 flex items-center gap-1.5 transition-all disabled:opacity-50 cursor-pointer"
+                          >
+                            {loading ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <span>Complete Submission</span>
+                            )}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* AI Dispute Override Fallback Banner & Dropdown */}
+                  {requiresDisputeOverride && (
+                    <div className="bg-red-50 border border-red-250 rounded-xl p-4 space-y-4 animate-fadeIn">
+                      <div className="flex gap-2.5">
+                        <ShieldAlert className="h-5 w-5 text-red-600 shrink-0 mt-0.5" />
+                        <div className="space-y-1">
+                          <p className="text-xs font-bold text-red-800 uppercase tracking-wider">
+                            AI Assessment
+                          </p>
+                          <p className="text-xs text-red-750 leading-relaxed font-semibold">
+                            AI Assessment: {rejectionReason}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                        <p className="text-xs text-amber-800 leading-relaxed font-medium">
+                          Notice: If you believe the AI is incorrect, please be responsible, honest, and accurate. You may manually override this assessment below.
+                        </p>
+                      </div>
+
+                      <div className="pt-2 border-t border-red-200/50 space-y-2">
+                        <label htmlFor="dispute-category-select" className="text-xs font-bold text-slate-700 block">
+                          Help us categorize this issue manually:
+                        </label>
+                        <div className="flex gap-2">
+                          <select
+                            id="dispute-category-select"
+                            value={disputedCategorySelection}
+                            onChange={(e) => setDisputedCategorySelection(e.target.value)}
+                            className="flex-1 p-2.5 bg-white border border-red-350 rounded-xl text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500/20"
+                          >
+                            <option value="Pothole">Pothole</option>
+                            <option value="Water Leakage">Water Leakage</option>
+                            <option value="Damaged Streetlight">Damaged Streetlight</option>
+                            <option value="Waste Management">Waste Management</option>
+                            <option value="Public Infrastructure">Public Infrastructure</option>
+                          </select>
+
+                          <button
+                            type="submit"
+                            id="btn-complete-submission-disputed"
+                            disabled={loading}
+                            className="px-4 py-2.5 bg-red-600 hover:bg-red-700 text-white font-bold text-xs rounded-xl shadow-md shadow-red-100 flex items-center gap-1.5 transition-all disabled:opacity-50 cursor-pointer whitespace-nowrap"
+                          >
+                            {loading ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <span>Submit for Verification</span>
+                            )}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Submit Button */}
-                  <button
-                    type="submit"
-                    id="btn-submit-report"
-                    disabled={loading}
-                    className="w-full py-4 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl shadow-lg shadow-blue-100 flex items-center justify-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer text-sm"
-                  >
-                    {loading ? (
-                      <div className="flex items-center space-x-2">
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                        <span>Verifying with Gemini...</span>
-                      </div>
-                    ) : (
-                      <span>Submit Report</span>
-                    )}
-                  </button>
+                  {!requiresManual && !requiresDisputeOverride && (
+                    <button
+                      type="submit"
+                      id="btn-submit-report"
+                      disabled={loading}
+                      className="w-full py-4 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl shadow-lg shadow-blue-100 flex items-center justify-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer text-sm"
+                    >
+                      {loading ? (
+                        <div className="flex items-center space-x-2">
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          <span>Verifying with Gemini...</span>
+                        </div>
+                      ) : (
+                        <span>Submit Report</span>
+                      )}
+                    </button>
+                  )}
                 </form>
               </div>
 
@@ -634,10 +917,14 @@ export default function App() {
                 <button
                   type="button"
                   onClick={handleResetData}
-                  className="inline-flex items-center space-x-1.5 text-[10px] text-slate-400 hover:text-red-500 transition-colors font-semibold uppercase tracking-wider"
+                  className={`inline-flex items-center space-x-1.5 text-[10px] transition-all font-semibold uppercase tracking-wider px-3 py-1 rounded-full ${
+                    resetConfirm
+                      ? "text-red-600 bg-red-50 hover:bg-red-100 animate-pulse border border-red-200"
+                      : "text-slate-400 hover:text-red-500 hover:bg-slate-100"
+                  }`}
                 >
-                  <RefreshCw className="h-3 w-3" />
-                  <span>Reset App Data</span>
+                  <RefreshCw className={`h-3 w-3 ${resetConfirm ? "animate-spin" : ""}`} />
+                  <span>{resetConfirm ? "Click again to confirm reset" : "Reset App Data"}</span>
                 </button>
               </div>
             </motion.div>
@@ -662,7 +949,7 @@ export default function App() {
                 <div className="flex items-center gap-2">
                   <span className="text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-200/50 px-2.5 py-1 rounded-full font-bold uppercase tracking-wider flex items-center gap-1">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                    <span>{reports.length} Reports Active</span>
+                    <span>{reports.filter((r) => r.status === "Reported" || r.status === "Pending Verification (AI Dispute)").length} Reports Active</span>
                   </span>
                 </div>
               </div>
@@ -708,7 +995,13 @@ export default function App() {
                             <span className="text-xs font-bold text-blue-600 uppercase tracking-tighter">
                               {report.category}
                             </span>
-                            <span className="px-2 py-0.5 bg-slate-100 text-slate-600 text-[10px] rounded font-bold uppercase tracking-wider">
+                            <span className={`px-2 py-0.5 text-[10px] rounded font-bold uppercase tracking-wider ${
+                              report.status === "Resolved"
+                                ? "bg-emerald-100 text-emerald-700 border border-emerald-200/20"
+                                : report.status === "Pending Verification (AI Dispute)"
+                                ? "bg-orange-100 text-orange-700 border border-orange-200"
+                                : "bg-amber-50 text-amber-700 border border-amber-200/20"
+                            }`}>
                               {report.status}
                             </span>
                           </div>
@@ -721,10 +1014,38 @@ export default function App() {
                           </p>
                         </div>
 
-                        {/* Timing indicator */}
-                        <p className="text-[10px] text-slate-400 mt-2">
-                          {new Date(report.timestamp).toLocaleString()}
-                        </p>
+                        {/* Timing indicator and action buttons */}
+                        <div className="flex justify-between items-center mt-2 flex-wrap gap-2">
+                          <p className="text-[10px] text-slate-400">
+                            {new Date(report.timestamp).toLocaleString()}
+                          </p>
+                          <div className="flex gap-2">
+                            {userRole === "PlatformModerator" && report.status === "Pending Verification (AI Dispute)" && (
+                              <>
+                                <button
+                                  onClick={() => handleApproveOverride(report.id)}
+                                  className="text-[10px] px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold uppercase rounded-lg transition-all cursor-pointer shadow-sm"
+                                >
+                                  Approve Override
+                                </button>
+                                <button
+                                  onClick={() => handleConfirmFraud(report.id)}
+                                  className="text-[10px] px-2.5 py-1 bg-red-600 hover:bg-red-700 text-white font-bold uppercase rounded-lg transition-all cursor-pointer shadow-sm"
+                                >
+                                  Confirm Fraud
+                                </button>
+                              </>
+                            )}
+                            {userRole === "CityLeader" && report.status !== "Resolved" && report.status !== "Pending Verification (AI Dispute)" && (
+                              <button
+                                onClick={() => setIssueToResolve(report.id)}
+                                className="text-[10px] px-2.5 py-1 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200/50 font-bold uppercase rounded-lg transition-all cursor-pointer"
+                              >
+                                Mark as Resolved
+                              </button>
+                            )}
+                          </div>
+                        </div>
                       </div>
                     </div>
                   ))}
@@ -823,6 +1144,76 @@ export default function App() {
           <p>© 2026 Public-ally. Powered by Google AI Studio Gemini 3.5 Flash.</p>
         </div>
       </footer>
+
+      {/* 👤 Floating Role Indicator Badge */}
+      <div className="fixed bottom-4 right-4 z-50 pointer-events-none">
+        <div className="bg-slate-900/95 backdrop-blur-xs text-white text-[11px] font-bold px-3 py-1.5 rounded-full shadow-lg border border-slate-700/50 flex items-center gap-1.5 tracking-wide pointer-events-auto">
+          <span className="inline-flex h-2 w-2 relative">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+            <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+          </span>
+          <span>Viewing as: {userRole === "Citizen" ? "👤 Citizen" : userRole === "CityLeader" ? "🏛️ City Leader" : "🛡️ Platform Moderator"}</span>
+        </div>
+      </div>
+
+      {/* 🏛️ CITY LEADER RESOLUTION CONFIRMATION MODAL */}
+      <AnimatePresence>
+        {issueToResolve && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            {/* Backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIssueToResolve(null)}
+              className="absolute inset-0 bg-slate-900/60 backdrop-blur-xs"
+            />
+            
+            {/* Modal Body */}
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              className="relative bg-white w-full max-w-md rounded-2xl border border-slate-200 shadow-2xl overflow-hidden p-6 space-y-4"
+            >
+              <div className="flex flex-col items-center text-center space-y-3">
+                <div className="w-12 h-12 bg-amber-50 text-amber-600 rounded-full flex items-center justify-center text-xl shadow-inner">
+                  ⚠️
+                </div>
+                <h3 className="text-base font-bold text-slate-800">
+                  Confirm Resolution Action
+                </h3>
+                <p className="text-xs text-slate-600 leading-relaxed font-medium bg-amber-50 border border-amber-200 p-4 rounded-xl text-left">
+                  ⚠️ Accountability Alert: Incomplete or false resolutions will attract negative points, and the public WILL know about it. Are you sure this issue has been fully and honestly resolved?
+                </p>
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <button
+                  type="button"
+                  id="btn-confirm-resolve"
+                  onClick={async () => {
+                    const id = issueToResolve;
+                    setIssueToResolve(null);
+                    await handleResolveIssue(id);
+                  }}
+                  className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-md shadow-emerald-100 transition-all cursor-pointer text-center"
+                >
+                  Yes, Confirm Resolution
+                </button>
+                <button
+                  type="button"
+                  id="btn-cancel-resolve"
+                  onClick={() => setIssueToResolve(null)}
+                  className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 font-bold text-xs rounded-xl transition-all cursor-pointer text-center"
+                >
+                  Cancel
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
