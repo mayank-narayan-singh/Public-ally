@@ -1,0 +1,6 @@
+{
+  "name": "Public-ally",
+  "description": "A civic issue reporting platform enabling communities to report issues, verify them using Gemini 3.5 Flash AI, and track city progress with a live feed and leaderboard.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
