@@ -141,6 +141,10 @@ export default function App() {
   // Submit the report to the backend
   const handleSubmitReport = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (userRole !== "Citizen") {
+      showError("Note: Only Citizens have permission to submit new civic reports.");
+      return;
+    }
     if (!uploadedImage) {
       showError("Please upload an image before submitting.");
       return;
@@ -153,6 +157,7 @@ export default function App() {
     const bodyPayload: any = {
       imageBase64: uploadedImage,
       city: selectedCity,
+      userRole: userRole,
     };
 
     if (requiresManual) {
@@ -818,18 +823,24 @@ export default function App() {
                             <option value="Public Infrastructure">Public Infrastructure</option>
                           </select>
 
-                          <button
-                            type="submit"
-                            id="btn-complete-submission"
-                            disabled={loading}
-                            className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-md shadow-emerald-100 flex items-center gap-1.5 transition-all disabled:opacity-50 cursor-pointer"
-                          >
-                            {loading ? (
-                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                            ) : (
-                              <span>Complete Submission</span>
-                            )}
-                          </button>
+                          {userRole === "Citizen" ? (
+                            <button
+                              type="submit"
+                              id="btn-complete-submission"
+                              disabled={loading}
+                              className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-md shadow-emerald-100 flex items-center gap-1.5 transition-all disabled:opacity-50 cursor-pointer whitespace-nowrap"
+                            >
+                              {loading ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              ) : (
+                                <span>Complete Submission</span>
+                              )}
+                            </button>
+                          ) : (
+                            <div className="text-xs text-slate-500 bg-slate-50 border border-slate-200 p-2.5 rounded-xl font-semibold flex-1 text-center">
+                              Note: Only Citizens have permission to submit new civic reports.
+                            </div>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -877,18 +888,24 @@ export default function App() {
                             <option value="Public Infrastructure">Public Infrastructure</option>
                           </select>
 
-                          <button
-                            type="submit"
-                            id="btn-complete-submission-disputed"
-                            disabled={loading}
-                            className="px-4 py-2.5 bg-red-600 hover:bg-red-700 text-white font-bold text-xs rounded-xl shadow-md shadow-red-100 flex items-center gap-1.5 transition-all disabled:opacity-50 cursor-pointer whitespace-nowrap"
-                          >
-                            {loading ? (
-                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                            ) : (
-                              <span>Submit for Verification</span>
-                            )}
-                          </button>
+                          {userRole === "Citizen" ? (
+                            <button
+                              type="submit"
+                              id="btn-complete-submission-disputed"
+                              disabled={loading}
+                              className="px-4 py-2.5 bg-red-600 hover:bg-red-700 text-white font-bold text-xs rounded-xl shadow-md shadow-red-100 flex items-center gap-1.5 transition-all disabled:opacity-50 cursor-pointer whitespace-nowrap"
+                            >
+                              {loading ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              ) : (
+                                <span>Submit for Verification</span>
+                              )}
+                            </button>
+                          ) : (
+                            <div className="text-xs text-slate-500 bg-slate-50 border border-slate-200 p-2.5 rounded-xl font-semibold flex-1 text-center">
+                              Note: Only Citizens have permission to submit new civic reports.
+                            </div>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -896,21 +913,27 @@ export default function App() {
 
                   {/* Submit Button */}
                   {!requiresManual && !requiresDisputeOverride && (
-                    <button
-                      type="submit"
-                      id="btn-submit-report"
-                      disabled={loading}
-                      className="w-full py-4 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl shadow-lg shadow-blue-100 flex items-center justify-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer text-sm"
-                    >
-                      {loading ? (
-                        <div className="flex items-center space-x-2">
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                          <span>Verifying with Gemini...</span>
-                        </div>
-                      ) : (
-                        <span>Submit Report</span>
-                      )}
-                    </button>
+                    userRole === "Citizen" ? (
+                      <button
+                        type="submit"
+                        id="btn-submit-report"
+                        disabled={loading}
+                        className="w-full py-4 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl shadow-lg shadow-blue-100 flex items-center justify-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer text-sm"
+                      >
+                        {loading ? (
+                          <div className="flex items-center space-x-2">
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            <span>Verifying with Gemini...</span>
+                          </div>
+                        ) : (
+                          <span>Submit Report</span>
+                        )}
+                      </button>
+                    ) : (
+                      <div className="w-full p-4 bg-slate-50 border border-slate-200 text-slate-500 text-xs font-semibold rounded-xl text-center">
+                        Note: Only Citizens have permission to submit new civic reports.
+                      </div>
+                    )
                   )}
                 </form>
               </div>

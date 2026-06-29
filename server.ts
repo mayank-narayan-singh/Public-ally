@@ -201,7 +201,11 @@ app.post("/api/reset", (req, res) => {
 
 // 3. Submit civic issue report
 app.post("/api/report", async (req, res) => {
-  const { imageBase64, city, manualCategory, isDisputedOverride } = req.body;
+  const { imageBase64, city, manualCategory, isDisputedOverride, userRole } = req.body;
+
+  if (userRole !== "Citizen") {
+    return res.status(403).json({ error: "Note: Only Citizens have permission to submit new civic reports." });
+  }
 
   if (!imageBase64) {
     return res.status(400).json({ error: "Missing image upload." });
