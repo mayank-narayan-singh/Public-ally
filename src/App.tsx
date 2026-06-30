@@ -16,7 +16,8 @@ import {
   RefreshCw,
   X,
   Plus,
-  FileImage
+  FileImage,
+  Menu
 } from "lucide-react";
 import { Leader, CivicReport, Screen } from "./types";
 
@@ -24,6 +25,7 @@ export default function App() {
   const [currentScreen, setCurrentScreen] = useState<Screen>("REPORT");
   const [leaders, setLeaders] = useState<Leader[]>([]);
   const [reports, setReports] = useState<CivicReport[]>([]);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
   
   // Form State
   const [selectedCity, setSelectedCity] = useState<string>("Bengaluru");
@@ -477,23 +479,31 @@ export default function App() {
   const sortedLeaders = [...leaders].sort((a, b) => b.points - a.points);
 
   return (
-    <div id="app-root" className="min-h-screen bg-slate-50 text-slate-800 font-sans flex flex-col antialiased">
+    <div id="app-root" className="min-h-screen max-w-[100vw] overflow-x-hidden bg-slate-50 text-slate-800 font-sans flex flex-col antialiased">
       {/* 🚀 GLOBAL NAVIGATION BAR */}
       <nav id="nav-bar" className="sticky top-0 z-50 bg-white border-b border-slate-200 shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-8">
           <div className="flex justify-between items-center h-16">
             {/* Title Branding */}
-            <div className="flex items-center space-x-3 cursor-pointer" onClick={() => setCurrentScreen("REPORT")}>
-              <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-white">
+            <button
+              id="brand-logo-btn"
+              type="button"
+              onClick={() => {
+                setCurrentScreen("REPORT");
+                setIsMobileMenuOpen(false);
+              }}
+              className="flex items-center space-x-3 cursor-pointer group focus:outline-none select-none text-left bg-transparent border-0 p-0"
+            >
+              <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-white transition-all duration-200 group-hover:scale-105 group-hover:bg-blue-700 shadow-xs">
                 <Megaphone className="h-4.5 w-4.5" />
               </div>
-              <span className="text-2xl font-bold tracking-tight text-slate-800">
+              <span className="text-2xl font-bold tracking-tight text-slate-800 transition-colors duration-200 group-hover:text-blue-600">
                 Public-ally
               </span>
-            </div>
+            </button>
 
-            {/* Screen Switching Controls */}
-            <div className="flex items-center gap-1 bg-transparent p-1 rounded-full">
+            {/* Screen Switching Controls (Desktop Only) */}
+            <div className="hidden md:flex items-center gap-1 bg-transparent p-1 rounded-full">
               <button
                 id="btn-nav-report"
                 onClick={() => setCurrentScreen("REPORT")}
@@ -534,8 +544,8 @@ export default function App() {
               </button>
             </div>
 
-            {/* Right side avatar slot */}
-            <div className="flex items-center gap-2 md:gap-4">
+            {/* Right side avatar slot (Desktop Only) */}
+            <div className="hidden md:flex items-center gap-2 md:gap-4">
               <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-100">
                 <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse"></span>
                 <span>Viewing as: {userRole === "Citizen" ? "Citizen" : userRole === "CityLeader" ? "City Leader" : "Platform Moderator"}</span>
@@ -618,8 +628,154 @@ export default function App() {
                 )}
               </div>
             </div>
+
+            {/* Mobile Hamburger Menu Trigger (Mobile Only) */}
+            <div className="flex md:hidden items-center">
+              <button
+                id="btn-mobile-menu-toggle"
+                onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+                className="p-2 rounded-lg text-slate-600 hover:bg-slate-100 hover:text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer transition-colors"
+                aria-label="Toggle Menu"
+              >
+                {isMobileMenuOpen ? (
+                  <X className="h-6 w-6" />
+                ) : (
+                  <Menu className="h-6 w-6" />
+                )}
+              </button>
+            </div>
           </div>
         </div>
+
+        {/* Mobile Dropdown Collapsible Menu (only visible on mobile when toggled open) */}
+        <AnimatePresence>
+          {isMobileMenuOpen && (
+            <motion.div
+              id="mobile-dropdown-menu"
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: "auto" }}
+              exit={{ opacity: 0, height: 0 }}
+              transition={{ duration: 0.2 }}
+              className="md:hidden border-t border-slate-200 bg-white overflow-hidden shadow-lg"
+            >
+              <div className="px-4 pt-3 pb-6 space-y-4">
+                {/* Navigation Section */}
+                <div className="space-y-1">
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider px-3 mb-1">
+                    Navigation
+                  </p>
+                  
+                  <button
+                    id="btn-mobile-nav-report"
+                    onClick={() => {
+                      setCurrentScreen("REPORT");
+                      setIsMobileMenuOpen(false);
+                    }}
+                    className={`w-full flex items-center space-x-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all ${
+                      currentScreen === "REPORT"
+                        ? "text-blue-600 bg-blue-50"
+                        : "text-slate-600 hover:bg-slate-50"
+                    }`}
+                  >
+                    <span className="text-base shrink-0">📝</span>
+                    <span>Report an Issue</span>
+                  </button>
+
+                  <button
+                    id="btn-mobile-nav-feed"
+                    onClick={() => {
+                      setCurrentScreen("FEED");
+                      setIsMobileMenuOpen(false);
+                    }}
+                    className={`w-full flex items-center space-x-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all ${
+                      currentScreen === "FEED"
+                        ? "text-blue-600 bg-blue-50"
+                        : "text-slate-600 hover:bg-slate-50"
+                    }`}
+                  >
+                    <span className="text-base shrink-0">📈</span>
+                    <span>Live Feed</span>
+                  </button>
+
+                  <button
+                    id="btn-mobile-nav-leaderboard"
+                    onClick={() => {
+                      setCurrentScreen("LEADERBOARD");
+                      setIsMobileMenuOpen(false);
+                    }}
+                    className={`w-full flex items-center space-x-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all ${
+                      currentScreen === "LEADERBOARD"
+                        ? "text-blue-600 bg-blue-50"
+                        : "text-slate-600 hover:bg-slate-50"
+                    }`}
+                  >
+                    <span className="text-base shrink-0">🏆</span>
+                    <span>Leaderboard</span>
+                  </button>
+                </div>
+
+                {/* Switch View Role Section */}
+                <div className="pt-2 border-t border-slate-100 space-y-1">
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider px-3 mb-2">
+                    Switch View Role
+                  </p>
+                  <div className="grid grid-cols-1 gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setUserRole("Citizen");
+                        setIsMobileMenuOpen(false);
+                        showSuccess("Switched view to Citizen role");
+                      }}
+                      className={`flex items-center space-x-3 px-4 py-3 rounded-xl text-xs font-bold transition-all text-left ${
+                        userRole === "Citizen"
+                          ? "bg-blue-50 text-blue-700 border border-blue-200"
+                          : "bg-slate-50 text-slate-600 border border-slate-100 hover:bg-slate-100"
+                      }`}
+                    >
+                      <span className="text-base shrink-0">👤</span>
+                      <span>Citizen</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setUserRole("CityLeader");
+                        setIsMobileMenuOpen(false);
+                        showSuccess("Switched view to City Leader role");
+                      }}
+                      className={`flex items-center space-x-3 px-4 py-3 rounded-xl text-xs font-bold transition-all text-left ${
+                        userRole === "CityLeader"
+                          ? "bg-blue-50 text-blue-700 border border-blue-200"
+                          : "bg-slate-50 text-slate-600 border border-slate-100 hover:bg-slate-100"
+                      }`}
+                    >
+                      <span className="text-base shrink-0">🏛️</span>
+                      <span>City Leader</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setUserRole("PlatformModerator");
+                        setIsMobileMenuOpen(false);
+                        showSuccess("Switched view to Platform Moderator role");
+                      }}
+                      className={`flex items-center space-x-3 px-4 py-3 rounded-xl text-xs font-bold transition-all text-left ${
+                        userRole === "PlatformModerator"
+                          ? "bg-blue-50 text-blue-700 border border-blue-200"
+                          : "bg-slate-50 text-slate-600 border border-slate-100 hover:bg-slate-100"
+                      }`}
+                    >
+                      <span className="text-base shrink-0">🛡️</span>
+                      <span>Platform Moderator</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </nav>
 
       {/* 📣 NOTIFICATION POP-UPS */}
